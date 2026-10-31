@@ -1,5 +1,5 @@
 import { apiClient } from "@api/apiClient";
-import type { Board, Register, LectureRegister, StudentHistory, Leave, PunchRow, DayStatus } from "../types";
+import type { Board, Register, LectureRegister, StudentHistory, Leave, DailyPunch, DailyPunchQuery, DayStatus } from "../types";
 
 const data = <T>(p: Promise<{ data: { data: T } }>) => p.then((r) => r.data.data);
 
@@ -14,8 +14,10 @@ export const attendanceApi = Object.freeze({
 
   manualPunch: (studentId: string, date: string, time: string, reason: string) =>
     data(apiClient.post("/punches/manual", { studentId, date, time, reason })),
-  punches: (params: { date?: string; personType?: string; biometricId?: string }) =>
-    data<PunchRow[]>(apiClient.get("/punches", { params: { ...params, limit: 200 } })),
+  dailyPunches: async (q: DailyPunchQuery) => {
+    const { data: body } = await apiClient.get("/punches/daily", { params: { ...q, limit: 50 } });
+    return { data: body.data as DailyPunch[], meta: body.meta as { total: number; page: number; pages: number } };
+  },
 
   lecture: (id: string) => data<LectureRegister>(apiClient.get(`/lectures/sessions/${id}`)),
   createLecture: (body: { batchId: string; date: string; startTime: string; endTime: string; subject?: string }) =>

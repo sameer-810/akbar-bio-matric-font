@@ -107,18 +107,29 @@ export interface Leave {
   createdAt?: string;
 }
 
-export interface PunchRow {
+/** One person on one date: their first valid punch and their last. */
+export interface DailyPunch {
   id: string;
-  at: string;
-  receivedAt: string;
+  date: string;
   biometricId: string;
-  deviceSerial: string;
-  source: string;
   personType: string;
   name: string | null;
+  /** for an ID nobody here has, the GR the ID itself carries */
   grNumber: string | null;
-  kind: string | null;
-  stale: boolean;
-  clockSuspect: boolean;
-  reason: string;
+  /** the name the ID is enrolled under on the machine, when nobody here has it */
+  machineName: string | null;
+  inAt: string;
+  outAt: string | null;
+  punches: number;
+  /** machine serials, or "manual" for punches entered by hand */
+  sources: string[];
+}
+
+export interface DailyPunchQuery {
+  from: string;
+  to: string;
+  personType?: string;
+  source?: string;
+  search?: string;
+  page: number;
 }
