@@ -1,55 +1,76 @@
 import React, { useState } from "react";
 import { Fingerprint } from "lucide-react-native";
-import { Screen, VStack, HStack, Text, Button, DataTable, ChipsRow, TextField, StatusChip, ErrorState, SearchInput, Select, type Column } from "@shared/ui";
+import { Screen, Card, VStack, HStack, Text, Button, DataTable, ChipsRow, TextField, Banner, ErrorState, SearchInput, Select, Pagination, type Column } from "@shared/ui";
 import { useFilters } from "@shared/useFilters";
-import { academyToday, formatTime, formatDateTime } from "@shared/format";
-import { usePunches } from "../hooks/useAttendance";
-import type { PunchRow } from "../types";
+import { academyToday, formatDay, formatTime } from "@shared/format";
+import { useDailyPunches } from "../hooks/useAttendance";
+import type { DailyPunch } from "../types";
+
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const PAGE_SIZE = 50;
+
+const personLabel = (p: DailyPunch) => {
+  if (p.name) return p.personType === "teacher" ? `${p.name} (faculty)` : p.name;
+  return p.machineName ? `${p.machineName} · not added in the app` : "Nobody with this ID";
+};
+const timeOrDash = (at: string | null) => (at ? formatTime(at) : "--");
 
 /**
- * Every punch exactly as it arrived — the old system's "Biometric" report.
- * "Unknown" shows the IDs nobody here has yet: usually a student enrolled on
- * the machine but not admitted.
+ * The old system's "Biometric" report: one row per person per date, with the
+ * first valid punch as In and the last as Out. "Unknown IDs" shows the people
+ * nobody here has yet: usually a student enrolled on the machine but not admitted.
  */
 export default function PunchesScreen() {
-  const [date, setDate] = useState(academyToday());
-  const { filters, set, reset, isFiltered } = useFilters("punches", { who: "all", search: "", kind: "", source: "" });
-  const { who } = filters;
-  const punches = usePunches({ date, personType: who === "all" ? undefined : who });
-  const needle = filters.search.trim().toLowerCase();
-  // one day's punches are a few hundred rows at most: filtered here, not on the server
-  const rows = (punches.data ?? []).filter(
-    (p) =>
-      (!needle || `${p.name ?? ""} ${p.grNumber ?? ""} ${p.biometricId}`.toLowerCase().includes(needle)) &&
-      (!filters.kind || (filters.kind === "none" ? !p.kind : p.kind === filters.kind)) &&
-      (!filters.source || (filters.source === "manual" ? p.source === "manual" : p.source !== "manual")),
+  const [today] = useState(academyToday());
+  const { filters, set, reset, isFiltered } = useFilters("punches-daily", { who: "all", search: "", source: "", from: today, to: today, page: 1 });
+  // typed dates wait for Apply, so a half-typed date never reloads the table
+  const [from, setFrom] = useState(filters.from);
+  const [to, setTo] = useState(filters.to);
+  const validRange = YMD.test(from) && YMD.test(to) && from <= to;
+  const punches = useDailyPunches(
+    {
+      from: filters.from,
+      to: filters.to,
+      personType: filters.who === "all" ? undefined : filters.who,
+      source: filters.source || undefined,
+      search: filters.search.trim() || undefined,
+      page: filters.page,
+    },
+    YMD.test(filters.from) && YMD.test(filters.to),
   );
+  const rows = punches.data?.data ?? [];
+  const meta = punches.data?.meta;
 
-  const columns: Column<PunchRow>[] = [
-    { key: "at", header: "Time", width: 90, render: (p) => <Text variant="body-sm" tabular>{formatTime(p.at)}</Text> },
-    { key: "id", header: "Fingerprint ID", width: 120, render: (p) => <Text variant="body-sm" tabular>{p.biometricId}</Text> },
+  const resetAll = () => {
+    setFrom(today);
+    setTo(today);
+    reset();
+  };
+
+  const columns: Column<DailyPunch>[] = [
+    { key: "date", header: "Date", width: 110, render: (p) => <Text variant="body-sm" tabular>{formatDay(p.date)}</Text> },
     {
       key: "who",
-      header: "Person",
+      header: "Student Name",
       flex: 2,
       render: (p) => (
         <Text variant="body-sm" tone={p.personType === "unknown" ? "warning" : "primary"}>
-          {p.name ?? "Nobody with this ID"}
-          {p.grNumber ? ` · GR ${p.grNumber}` : ""}
-          {p.personType === "teacher" ? " (faculty)" : ""}
+          {personLabel(p)}
         </Text>
       ),
     },
-    { key: "kind", header: "Counted as", width: 110, render: (p) => (p.kind ? <StatusChip status={p.kind} size="sm" /> : <Text variant="caption" tone="tertiary">—</Text>) },
+    { key: "gr", header: "GR Number", width: 100, render: (p) => <Text variant="body-sm" tabular>{p.grNumber ?? "--"}</Text> },
+    { key: "in", header: "In Time", width: 90, render: (p) => <Text variant="body-sm" tabular>{timeOrDash(p.inAt)}</Text> },
+    { key: "out", header: "Out Time", width: 90, render: (p) => <Text variant="body-sm" tabular>{timeOrDash(p.outAt)}</Text> },
+    { key: "id", header: "Fingerprint ID", width: 120, render: (p) => <Text variant="body-sm" tabular>{p.biometricId}</Text> },
+    { key: "count", header: "Punches", width: 80, render: (p) => <Text variant="body-sm" tabular>{p.punches}</Text> },
     {
       key: "src",
       header: "From",
       flex: 1,
       render: (p) => (
         <Text variant="caption" tone="tertiary">
-          {p.source === "manual" ? `entered by hand — ${p.reason}` : p.deviceSerial}
-          {p.stale ? ` · arrived ${formatDateTime(p.receivedAt)}` : ""}
-          {p.clockSuspect ? " · machine clock looked wrong" : ""}
+          {p.sources.map((s) => (s === "manual" ? "entered by hand" : s)).join(", ")}
         </Text>
       ),
     },
@@ -58,43 +79,31 @@ export default function PunchesScreen() {
   return (
     <Screen title="Punches" subtitle="Straight from the fingerprint machines" testID="punches-screen">
       <VStack gap={12}>
-        <HStack gap={12} align="center" wrap>
-          <TextField value={date} onChangeText={(t) => /^\d{4}-\d{2}-\d{2}$/.test(t) && setDate(t)} accessibilityLabel="Date" containerStyle={{ width: 150 }} />
-          <ChipsRow
-            chips={[
-              { key: "all", label: "Everyone" },
-              { key: "student", label: "Students" },
-              { key: "teacher", label: "Faculty" },
-              { key: "unknown", label: "Unknown IDs" },
-            ]}
-            active={who}
-            onChange={(k) => set({ who: k })}
-          />
+        <HStack gap={12} align="flex-end" wrap>
+          <TextField label="From Date" value={from} onChangeText={setFrom} placeholder="YYYY-MM-DD" containerStyle={{ width: 150 }} testID="punches-from" />
+          <TextField label="To Date" value={to} onChangeText={setTo} placeholder="YYYY-MM-DD" containerStyle={{ width: 150 }} testID="punches-to" />
+          <Button label="Apply" size="sm" disabled={!validRange} onPress={() => set({ from, to, page: 1 })} testID="punches-apply" />
+          <Button label="Reset" variant="secondary" size="sm" onPress={resetAll} testID="punches-reset" />
         </HStack>
+        {!validRange ? <Banner tone="warning" message="Enter both dates as YYYY-MM-DD, with From on or before To." /> : null}
+        <ChipsRow
+          chips={[
+            { key: "all", label: "Everyone" },
+            { key: "student", label: "Students" },
+            { key: "teacher", label: "Faculty" },
+            { key: "unknown", label: "Unknown IDs" },
+          ]}
+          active={filters.who}
+          onChange={(k) => set({ who: k, page: 1 })}
+        />
         <HStack gap={12} align="center" wrap>
           <SearchInput
             value={filters.search}
-            onChangeText={(v) => set({ search: v })}
+            onChangeText={(v) => set({ search: v, page: 1 })}
             placeholder="Name, GR or fingerprint ID"
             style={{ flex: 2, minWidth: 220 }}
             testID="punches-search"
           />
-          <HStack style={{ flex: 1, minWidth: 160 }}>
-            <Select
-              value={filters.kind || null}
-              options={[
-                { value: "", label: "Counted as: any" },
-                { value: "entry", label: "IN" },
-                { value: "exit", label: "OUT" },
-                { value: "between", label: "Between" },
-                { value: "duplicate", label: "Repeat" },
-                { value: "ignored", label: "Ignored" },
-                { value: "none", label: "Not counted" },
-              ]}
-              onChange={(v) => set({ kind: v })}
-              placeholder="Counted as: any"
-            />
-          </HStack>
           <HStack style={{ flex: 1, minWidth: 160 }}>
             <Select
               value={filters.source || null}
@@ -103,11 +112,10 @@ export default function PunchesScreen() {
                 { value: "device", label: "Fingerprint machine" },
                 { value: "manual", label: "Entered by hand" },
               ]}
-              onChange={(v) => set({ source: v })}
+              onChange={(v) => set({ source: v, page: 1 })}
               placeholder="Any source"
             />
           </HStack>
-          {isFiltered ? <Button label="Clear filters" variant="ghost" size="sm" onPress={reset} /> : null}
         </HStack>
         {punches.error ? <ErrorState error={punches.error} onRetry={() => void punches.refetch()} /> : null}
         <DataTable
@@ -116,8 +124,26 @@ export default function PunchesScreen() {
           keyExtractor={(p) => p.id}
           emptyIcon={Fingerprint}
           emptyTitle={punches.isLoading ? "Loading…" : isFiltered ? "No punch matches these filters" : "No punches"}
+          mobileCard={(p) => (
+            <Card>
+              <VStack gap={4}>
+                <Text variant="label" tone={p.personType === "unknown" ? "warning" : "primary"}>
+                  {personLabel(p)}
+                </Text>
+                <Text variant="caption" tone="secondary">
+                  {formatDay(p.date)} · GR {p.grNumber ?? "--"} · ID {p.biometricId}
+                </Text>
+                <Text variant="body-sm" tabular>
+                  In {timeOrDash(p.inAt)} · Out {timeOrDash(p.outAt)}
+                </Text>
+              </VStack>
+            </Card>
+          )}
           testID="punches-table"
         />
+        {meta && meta.pages > 1 ? (
+          <Pagination page={filters.page} totalPages={meta.pages} total={meta.total} limit={PAGE_SIZE} onPageChange={(page) => set({ page })} />
+        ) : null}
       </VStack>
     </Screen>
   );

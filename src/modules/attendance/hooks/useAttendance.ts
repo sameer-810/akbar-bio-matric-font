@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { attendanceApi } from "../api/attendanceApi";
-import type { DayStatus } from "../types";
+import type { DailyPunchQuery, DayStatus } from "../types";
 
 /** The board is the screen at the gate: near live. A socket can replace this poll later. */
 export function useBoard(date?: string) {
@@ -24,8 +24,14 @@ export function useLectureRegister(id: string) {
   return useQuery({ queryKey: ["lectureRegister", id], queryFn: () => attendanceApi.lecture(id) });
 }
 
-export function usePunches(params: { date?: string; personType?: string }) {
-  return useQuery({ queryKey: ["punches", params], queryFn: () => attendanceApi.punches(params), refetchInterval: 10_000 });
+export function useDailyPunches(q: DailyPunchQuery, enabled: boolean) {
+  return useQuery({
+    queryKey: ["punches", "daily", q],
+    queryFn: () => attendanceApi.dailyPunches(q),
+    enabled,
+    refetchInterval: 10_000,
+    placeholderData: (prev) => prev,
+  });
 }
 
 /** Parent applications waiting for staff; polled so the desk sees new ones. */
