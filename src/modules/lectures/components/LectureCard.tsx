@@ -61,7 +61,7 @@ export function LectureCard({
   const canCancel = (canManage || onCancelOverride) && l.status === "scheduled" && (state === "upcoming" || state === "ongoing");
 
   return (
-    <Card accentColor={ACCENT[state]} onPress={mode === "view" ? onOpen : undefined} testID={`lecture-card-${l.startTime}`}>
+    <Card accentColor={ACCENT[state]} testID={`lecture-card-${l.startTime}`}>
       <VStack gap={8}>
         <HStack gap={8} align="center" wrap>
           <Text variant="label" tabular style={{ minWidth: 130 }}>
