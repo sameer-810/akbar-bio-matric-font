@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 import { parentApi } from "./api/parentApi";
@@ -14,6 +15,25 @@ export type PushState = "on" | "denied" | "unsupported" | "not_configured" | "er
  * prints warnings into every staff member's console.
  */
 export async function registerForPush(): Promise<PushState> {
+  last = await attempt();
+  listeners.forEach((l) => l());
+  return last;
+}
+
+// the latest result, so the Account tab shows what the sign-in attempt found
+let last: PushState | null = null;
+const listeners = new Set<() => void>();
+export function usePushState(): PushState | null {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => last,
+  );
+}
+
+async function attempt(): Promise<PushState> {
   if (Platform.OS === "web") return "unsupported";
   try {
     const [Device, Notifications] = await Promise.all([import("expo-device"), import("expo-notifications")]);
