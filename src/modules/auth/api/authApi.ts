@@ -7,7 +7,8 @@ type Account = StaffAccount | ParentAccount;
 interface TokenResponse {
   account: Account;
   accessToken: string;
-  refreshToken: string;
+  /** absent on the web, where it arrives as a cookie */
+  refreshToken?: string;
 }
 
 export const authApi = Object.freeze({

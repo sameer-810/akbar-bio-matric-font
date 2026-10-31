@@ -52,8 +52,7 @@ interface AuthState {
   isHydrated: boolean;
   isAuthChecked: boolean;
 
-  signedIn: (audience: Audience, account: StaffAccount | ParentAccount, token: string, refreshToken: string) => void;
-  updateTokens: (token: string, refreshToken: string) => void;
+  signedIn: (audience: Audience, account: StaffAccount | ParentAccount, token: string, refreshToken?: string) => void;
   updateAccount: (account: StaffAccount | ParentAccount) => void;
   logout: () => Promise<void>;
   initializeAuth: () => Promise<void>;
@@ -63,6 +62,18 @@ interface AuthState {
 
 /** The base path of the door this session came through. */
 export const authBase = (audience: Audience | null) => (audience === "parent" ? "/parent/auth" : "/auth");
+
+/**
+ * The web keeps its refresh token in an httpOnly cookie no script can read, and
+ * its access token only in memory; phones keep both in the OS keystore.
+ */
+const onWeb = Platform.OS === "web";
+export const cookieTransport: { withCredentials?: boolean; headers?: Record<string, string> } = onWeb
+  ? { withCredentials: true, headers: { "X-Auth-Transport": "cookie" } }
+  : {};
+
+/** Whether this session can get a new access token; on the web only the server can see the cookie. */
+export const canRefresh = (s: Pick<AuthState, "audience" | "refreshToken">) => Boolean(onWeb ? s.audience : s.refreshToken);
 
 export function isTokenExpired(token: string | null) {
   if (!token) return true;
@@ -76,7 +87,7 @@ export function isTokenExpired(token: string | null) {
   }
 }
 
-/** The OS keystore on phones; localStorage on the web (no keystore exists there). */
+/** The OS keystore on phones; on the web, localStorage, which is why no token is saved there. */
 const secureStorage: StateStorage = {
   getItem: async (name) => {
     if (Platform.OS === "web") {
@@ -117,6 +128,17 @@ const STORAGE_KEY = "akbars-auth";
 /** A burst of 401s must trigger one refresh, not twenty. */
 let refreshPromise: Promise<string | null> | null = null;
 
+/**
+ * The cookie is shared by every tab and rotates on use, so tabs take turns: one
+ * sent with a cookie another tab just replaced would be refused as a replay.
+ */
+function oneTabAtATime<T>(run: () => Promise<T>) {
+  const { locks } = globalThis.navigator as unknown as {
+    locks?: { request: (name: string, fn: () => Promise<T>) => Promise<T> };
+  };
+  return locks ? locks.request("akbars-refresh", run) : run();
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -135,11 +157,9 @@ export const useAuthStore = create<AuthState>()(
           staff: audience === "staff" ? (account as StaffAccount) : null,
           parent: audience === "parent" ? (account as ParentAccount) : null,
           token,
-          refreshToken,
+          refreshToken: refreshToken ?? null,
           isAuthenticated: true,
         }),
-
-      updateTokens: (token, refreshToken) => set({ token, refreshToken, isAuthenticated: true }),
 
       // the account is re-read from the server on refresh, so a changed role,
       // a revoked permission or the forced-password flag is never stale here —
@@ -149,12 +169,14 @@ export const useAuthStore = create<AuthState>()(
 
       logout: async () => {
         const { refreshToken, audience } = get();
+        const session = canRefresh({ audience, refreshToken });
         set({ audience: null, staff: null, parent: null, token: null, refreshToken: null, isAuthenticated: false });
         queryClient.clear();
         await secureStorage.removeItem(STORAGE_KEY);
-        if (refreshToken) {
+        if (session) {
           try {
-            await axios.post(`${environment.apiUrl}${authBase(audience)}/logout`, { refreshToken }, { timeout: 10_000 });
+            const body = refreshToken ? { refreshToken } : {};
+            await axios.post(`${environment.apiUrl}${authBase(audience)}/logout`, body, { timeout: 10_000, ...cookieTransport });
           } catch {
             // the session expires on its own; signing out locally is what matters
           }
@@ -168,13 +190,15 @@ export const useAuthStore = create<AuthState>()(
         refreshPromise = (async () => {
           try {
             const { refreshToken, audience } = get();
-            if (!refreshToken || !audience) {
+            if (!canRefresh({ audience, refreshToken })) {
               await get().logout();
               return null;
             }
-            const rs = await axios.post(`${environment.apiUrl}${authBase(audience)}/refresh`, { refreshToken });
+            // a browser session from before the cookie still sends its token, once, to move over
+            const body = refreshToken ? { refreshToken } : {};
+            const rs = await oneTabAtATime(() => axios.post(`${environment.apiUrl}${authBase(audience)}/refresh`, body, cookieTransport));
             const { accessToken, refreshToken: next, account } = rs.data.data;
-            set({ token: accessToken, refreshToken: next, isAuthenticated: true });
+            set({ token: accessToken, refreshToken: next ?? null, isAuthenticated: true });
             get().updateAccount(account);
             return accessToken as string;
           } catch (err) {
@@ -190,19 +214,14 @@ export const useAuthStore = create<AuthState>()(
       },
 
       initializeAuth: async () => {
-        const { token, refreshToken } = get();
-        if (!token && !refreshToken) {
-          set({ isAuthChecked: true });
-          return;
-        }
         // always refresh once at start: it re-reads the account, so the
         // forced-password flag and permissions come from the server, not storage
-        if (refreshToken) {
+        if (canRefresh(get())) {
           await get().refreshSession();
-          set({ isAuthenticated: Boolean(get().refreshToken), isAuthChecked: true });
+          set({ isAuthenticated: canRefresh(get()), isAuthChecked: true });
           return;
         }
-        set({ isAuthenticated: !isTokenExpired(token), isAuthChecked: true });
+        set({ isAuthenticated: !isTokenExpired(get().token), isAuthChecked: true });
       },
     }),
     {
@@ -212,8 +231,7 @@ export const useAuthStore = create<AuthState>()(
         audience: s.audience,
         staff: s.staff,
         parent: s.parent,
-        token: s.token,
-        refreshToken: s.refreshToken,
+        ...(onWeb ? {} : { token: s.token, refreshToken: s.refreshToken }),
       }),
       onRehydrateStorage: () => (state) => {
         if (state) state.isHydrated = true;

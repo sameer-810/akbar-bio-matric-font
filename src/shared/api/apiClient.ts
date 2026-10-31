@@ -1,6 +1,6 @@
 import axios, { CanceledError, type InternalAxiosRequestConfig } from "axios";
 import { environment } from "@config/env";
-import { useAuthStore, authBase } from "../store/useAuthStore";
+import { useAuthStore, authBase, canRefresh, cookieTransport } from "../store/useAuthStore";
 
 interface RetryableConfig extends InternalAxiosRequestConfig {
   _retry?: boolean;
@@ -10,7 +10,8 @@ interface RetryableConfig extends InternalAxiosRequestConfig {
 
 export const apiClient = axios.create({
   baseURL: environment.apiUrl,
-  headers: { "Content-Type": "application/json" },
+  ...cookieTransport,
+  headers: { "Content-Type": "application/json", ...cookieTransport.headers },
   timeout: 30_000,
 });
 
@@ -40,9 +41,9 @@ apiClient.interceptors.response.use(
   async (error) => {
     const original = error.config as RetryableConfig | undefined;
     if (!original) return Promise.reject(error);
-    const { audience, refreshToken } = useAuthStore.getState();
+    const { audience } = useAuthStore.getState();
     // never refresh the refresh call, never loop
-    if (original.url?.includes(`${authBase(audience)}/refresh`) || original._retry || !refreshToken) {
+    if (original.url?.includes(`${authBase(audience)}/refresh`) || original._retry || !canRefresh(useAuthStore.getState())) {
       return Promise.reject(error);
     }
     if (original._accountId && original._accountId !== signedInAs()) return Promise.reject(error);
