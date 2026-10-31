@@ -6,7 +6,7 @@ import { apiErrorMessage } from "@api/apiClient";
 import { useAuthStore } from "@shared/store/useAuthStore";
 import { SessionsCard } from "@modules/auth/components/SessionsCard";
 import { useParentActions, useParentSettings } from "../hooks/useParent";
-import { registerForPush, type PushState } from "../pushRegistration";
+import { registerForPush, usePushState, type PushState } from "../pushRegistration";
 
 const PUSH_TEXT: Record<PushState, { tone: "success" | "warning" | "info" | "danger"; text: string }> = {
   on: { tone: "success", text: "Alerts will come to this phone." },
@@ -23,7 +23,8 @@ export default function ParentAccountScreen() {
   const logout = useAuthStore((s) => s.logout);
   const settings = useParentSettings();
   const act = useParentActions();
-  const [push, setPush] = useState<PushState | null>(Platform.OS === "web" ? "unsupported" : null);
+  const registered = usePushState();
+  const push: PushState | null = Platform.OS === "web" ? "unsupported" : registered;
   const [error, setError] = useState<string | null>(null);
   const notify = parent?.notify ?? { entry: true, exit: true, absent: true };
 
@@ -54,8 +55,8 @@ export default function ParentAccountScreen() {
             <VStack gap={10}>
               <SectionHeader title="Alerts on this phone" />
               {push ? <Banner tone={PUSH_TEXT[push].tone} message={PUSH_TEXT[push].text} /> : null}
-              {Platform.OS !== "web" ? (
-                <Button label="Turn on alerts" variant="secondary" onPress={async () => setPush(await registerForPush())} />
+              {push !== "on" && push !== "unsupported" ? (
+                <Button label={push ? "Try again" : "Turn on alerts"} variant="secondary" onPress={() => void registerForPush()} />
               ) : null}
             </VStack>
           </Card>
