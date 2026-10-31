@@ -1,22 +1,25 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
+  Animated,
   View,
   Pressable,
   StyleSheet,
   ScrollView,
   Platform,
+  type PressableStateCallbackType,
 } from "react-native";
 import { webAria } from "@shared/ui/a11y";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   LogOut,
+  ChevronDown,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react-native";
 import { useAuthStore } from "@shared/store/useAuthStore";
 import { palette, radius, layout } from "@shared/designSystem";
 import { Text, VStack, HStack, Avatar, BrandMark } from "@shared/ui";
-import { type NavItem, SECTION_ORDER, useVisibleNavItems } from "./navItems";
+import { type NavItem, type NavSection, SECTION_ICON, SECTION_ORDER, useVisibleNavItems } from "./navItems";
 import { useUnreadInbox } from "@modules/notifications/hooks/useInbox";
 
 interface Props {
@@ -37,6 +40,18 @@ export function Sidebar({
   const roleLabel = useAuthStore((s) => s.staff?.roleLabel ?? "");
   const logout = useAuthStore((s) => s.logout);
   const items = useVisibleNavItems();
+  const activeSection = items.find((it) => it.name === activeRoute)?.section;
+  const [open, setOpen] = useState<NavSection[]>(activeSection ? [activeSection] : []);
+
+  // arriving on a page from anywhere shows the group it belongs to
+  const [shownSection, setShownSection] = useState(activeSection);
+  if (activeSection !== shownSection) {
+    setShownSection(activeSection);
+    if (activeSection && !open.includes(activeSection)) setOpen([...open, activeSection]);
+  }
+
+  const toggle = (section: NavSection) =>
+    setOpen((o) => (o.includes(section) ? o.filter((s) => s !== section) : [...o, section]));
 
   return (
     <View
@@ -113,28 +128,31 @@ export function Sidebar({
         {SECTION_ORDER.map((section) => {
           const group = items.filter((it) => it.section === section);
           if (group.length === 0) return null;
+          const expanded = open.includes(section);
           return (
             <View key={section}>
               {collapsed ? (
                 <View style={styles.sectionDivider} />
               ) : (
-                <Text
-                  variant="overline"
-                  tone="tertiary"
-                  style={styles.sectionLabel}
-                >
-                  {section}
-                </Text>
-              )}
-              {group.map((item) => (
-                <NavRow
-                  key={item.name}
-                  item={item}
-                  active={activeRoute === item.name}
-                  collapsed={collapsed}
-                  onPress={() => onNavigate(item.name)}
+                <SectionRow
+                  section={section}
+                  active={section === activeSection}
+                  expanded={expanded}
+                  hasInbox={group.some((it) => it.name === "Inbox")}
+                  onPress={() => toggle(section)}
                 />
-              ))}
+              )}
+              {collapsed || expanded
+                ? group.map((item) => (
+                    <NavRow
+                      key={item.name}
+                      item={item}
+                      active={activeRoute === item.name}
+                      collapsed={collapsed}
+                      onPress={() => onNavigate(item.name)}
+                    />
+                  ))
+                : null}
             </View>
           );
         })}
@@ -198,6 +216,62 @@ export function Sidebar({
   );
 }
 
+/** RN's typings leave out the hovered state react-native-web passes. */
+const isHot = (state: PressableStateCallbackType) =>
+  state.pressed || (state as { hovered?: boolean }).hovered;
+
+function SectionRow({
+  section,
+  active,
+  expanded,
+  hasInbox,
+  onPress,
+}: {
+  section: NavSection;
+  active: boolean;
+  expanded: boolean;
+  hasInbox: boolean;
+  onPress: () => void;
+}) {
+  const Icon = SECTION_ICON[section];
+  const color = active ? palette.primary[700] : palette.text.secondary;
+  const [turn] = useState(() => new Animated.Value(expanded ? 1 : 0));
+  useEffect(() => {
+    Animated.timing(turn, {
+      toValue: expanded ? 1 : 0,
+      duration: 160,
+      useNativeDriver: Platform.OS !== "web",
+    }).start();
+  }, [expanded, turn]);
+  const rotate = turn.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "180deg"] });
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={section}
+      accessibilityState={{ expanded }}
+      {...webAria({ expanded })}
+      testID={`nav-section-${section}`}
+      style={(state) => [
+        styles.navRow,
+        styles.sectionRow,
+        active && styles.navRowActive,
+        isHot(state) && !active ? { backgroundColor: palette.ink[50] } : null,
+      ]}
+    >
+      <Icon size={18} color={active ? palette.primary[700] : palette.text.tertiary} strokeWidth={active ? 2.3 : 1.9} />
+      <Text variant="label-lg" numberOfLines={1} style={{ color, flex: 1 }}>
+        {section}
+      </Text>
+      {hasInbox && !expanded ? <UnreadBadge /> : null}
+      <Animated.View style={{ transform: [{ rotate }] }}>
+        <ChevronDown size={16} color={active ? palette.primary[700] : palette.text.tertiary} strokeWidth={2} />
+      </Animated.View>
+    </Pressable>
+  );
+}
+
 function NavRow({
   item,
   active,
@@ -220,13 +294,14 @@ function NavRow({
         Platform.OS === "web" ? undefined : { selected: active }
       }
       {...webAria({ current: active ? "page" : undefined })}
-      style={({ pressed }) => [
+      style={(state) => [
         styles.navRow,
-        collapsed && styles.navRowCollapsed,
-        active && styles.navRowActive,
-        pressed && !active ? { backgroundColor: palette.ink[50] } : null,
+        collapsed ? styles.navRowCollapsed : styles.childRow,
+        active && (collapsed ? styles.navRowActive : styles.childRowActive),
+        isHot(state) && !active ? { backgroundColor: palette.ink[50] } : null,
       ]}
     >
+      {active && !collapsed ? <View style={styles.activeBar} /> : null}
       <Icon
         size={18}
         color={active ? palette.primary[700] : palette.text.tertiary}
@@ -234,7 +309,7 @@ function NavRow({
       />
       {!collapsed ? (
         <Text
-          variant="label-lg"
+          variant="label"
           numberOfLines={1}
           style={{
             color: active ? palette.primary[700] : palette.text.secondary,
@@ -307,7 +382,18 @@ const styles = StyleSheet.create({
   },
   navRowCollapsed: { justifyContent: "center", paddingHorizontal: 0, gap: 0 },
   navRowActive: { backgroundColor: palette.primary[50] },
-  sectionLabel: { paddingHorizontal: 10, marginTop: 12, marginBottom: 3 },
+  sectionRow: { marginTop: 4 },
+  childRow: { marginLeft: 18 },
+  childRowActive: { backgroundColor: palette.ink[50] },
+  activeBar: {
+    position: "absolute",
+    left: 0,
+    top: 7,
+    bottom: 7,
+    width: 3,
+    borderRadius: 2,
+    backgroundColor: palette.primary[700],
+  },
   sectionDivider: {
     height: 1,
     backgroundColor: palette.border.subtle,

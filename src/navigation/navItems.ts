@@ -35,6 +35,16 @@ export type NavSection = "Overview" | "Academy" | "Attendance" | "Communication"
 
 export const SECTION_ORDER: NavSection[] = ["Overview", "Academy", "Attendance", "Communication", "Money", "Administration", "Workspace"];
 
+export const SECTION_ICON: Record<NavSection, LucideIcon> = {
+  Overview: LayoutDashboard,
+  Academy: GraduationCap,
+  Attendance: Fingerprint,
+  Communication: Megaphone,
+  Money: IndianRupee,
+  Administration: Settings,
+  Workspace: UserRound,
+};
+
 export interface NavItem {
   /** route name; must match a key in AppNavigator's SCREENS and the linking table */
   name: string;
